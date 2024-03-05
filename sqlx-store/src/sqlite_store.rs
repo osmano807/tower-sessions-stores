@@ -75,11 +75,12 @@ impl ExpiredDeletion for SqliteStore {
         let query = format!(
             r#"
             delete from {table_name}
-            where expiry_date < datetime('now', 'utc')
+            where expiry_date < ?
             "#,
             table_name = self.table_name
         );
         sqlx::query(&query)
+            .bind(OffsetDateTime::now_utc().unix_timestamp())
             .execute(&self.pool)
             .await
             .map_err(SqlxStoreError::Sqlx)?;
@@ -103,7 +104,7 @@ impl SessionStore for SqliteStore {
         sqlx::query(&query)
             .bind(&record.id.to_string())
             .bind(rmp_serde::to_vec(record).map_err(SqlxStoreError::Encode)?)
-            .bind(record.expiry_date)
+            .bind(record.expiry_date.unix_timestamp())
             .execute(&self.pool)
             .await
             .map_err(SqlxStoreError::Sqlx)?;
@@ -121,7 +122,7 @@ impl SessionStore for SqliteStore {
         );
         let data: Option<(Vec<u8>,)> = sqlx::query_as(&query)
             .bind(session_id.to_string())
-            .bind(OffsetDateTime::now_utc())
+            .bind(OffsetDateTime::now_utc().unix_timestamp())
             .fetch_optional(&self.pool)
             .await
             .map_err(SqlxStoreError::Sqlx)?;
