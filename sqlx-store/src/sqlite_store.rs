@@ -53,6 +53,7 @@ impl SqliteStore {
 
     /// Migrate the session schema.
     pub async fn migrate(&self) -> sqlx::Result<()> {
+        let mut tx = self.pool.begin().await?;
         let query = format!(
             r#"
             create table if not exists {}
@@ -64,7 +65,8 @@ impl SqliteStore {
             "#,
             self.table_name
         );
-        sqlx::query(&query).execute(&self.pool).await?;
+        sqlx::query(&query).execute(&mut *tx).await?;
+        tx.commit().await?;
         Ok(())
     }
 }
@@ -72,6 +74,7 @@ impl SqliteStore {
 #[async_trait]
 impl ExpiredDeletion for SqliteStore {
     async fn delete_expired(&self) -> session_store::Result<()> {
+        let mut tx = self.pool.begin().await.map_err(SqlxStoreError::Sqlx)?;
         let query = format!(
             r#"
             delete from {table_name}
@@ -81,9 +84,10 @@ impl ExpiredDeletion for SqliteStore {
         );
         sqlx::query(&query)
             .bind(OffsetDateTime::now_utc().unix_timestamp())
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(SqlxStoreError::Sqlx)?;
+        tx.commit().await.map_err(SqlxStoreError::Sqlx)?;
         Ok(())
     }
 }
@@ -91,6 +95,7 @@ impl ExpiredDeletion for SqliteStore {
 #[async_trait]
 impl SessionStore for SqliteStore {
     async fn save(&self, record: &Record) -> session_store::Result<()> {
+        let mut tx = self.pool.begin().await.map_err(SqlxStoreError::Sqlx)?;
         let query = format!(
             r#"
             insert into {}
@@ -105,9 +110,10 @@ impl SessionStore for SqliteStore {
             .bind(&record.id.to_string())
             .bind(rmp_serde::to_vec(record).map_err(SqlxStoreError::Encode)?)
             .bind(record.expiry_date.unix_timestamp())
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(SqlxStoreError::Sqlx)?;
+        tx.commit().await.map_err(SqlxStoreError::Sqlx)?;
 
         Ok(())
     }
@@ -120,12 +126,14 @@ impl SessionStore for SqliteStore {
             "#,
             self.table_name
         );
+        let mut tx = self.pool.begin().await.map_err(SqlxStoreError::Sqlx)?;
         let data: Option<(Vec<u8>,)> = sqlx::query_as(&query)
             .bind(session_id.to_string())
             .bind(OffsetDateTime::now_utc().unix_timestamp())
-            .fetch_optional(&self.pool)
+            .fetch_optional(&mut *tx)
             .await
             .map_err(SqlxStoreError::Sqlx)?;
+        tx.commit().await.map_err(SqlxStoreError::Sqlx)?;
 
         if let Some((data,)) = data {
             Ok(Some(
@@ -137,6 +145,7 @@ impl SessionStore for SqliteStore {
     }
 
     async fn delete(&self, session_id: &Id) -> session_store::Result<()> {
+        let mut tx = self.pool.begin().await.map_err(SqlxStoreError::Sqlx)?;
         let query = format!(
             r#"
             delete from {} where id = ?
@@ -145,9 +154,10 @@ impl SessionStore for SqliteStore {
         );
         sqlx::query(&query)
             .bind(&session_id.to_string())
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(SqlxStoreError::Sqlx)?;
+        tx.commit().await.map_err(SqlxStoreError::Sqlx)?;
 
         Ok(())
     }
